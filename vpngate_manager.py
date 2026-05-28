@@ -239,7 +239,7 @@ def fetch_api_text() -> str:
             "Accept": "text/plain,*/*",
         },
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    with urllib.request.urlopen(request, timeout=12) as response:
         return response.read().decode("utf-8", errors="replace")
 
 def parse_vpngate_rows(text: str) -> list[dict[str, str]]:
@@ -299,8 +299,12 @@ def fetch_candidates() -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen_ips = set()
     
-    log_to_json("INFO", "Main", "开始拉取官方 API 节点列表...")
-    for i in range(3):
+    # 检查本地是否有节点缓存，以确定最大重试尝试次数
+    has_cache = len(cached_nodes()) > 0
+    max_attempts = 1 if has_cache else 2
+    
+    log_to_json("INFO", "Main", f"开始拉取官方 API 节点列表 (最大尝试次数: {max_attempts})...")
+    for i in range(max_attempts):
         if i > 0:
             time.sleep(1.5)
         try:
@@ -320,7 +324,7 @@ def fetch_candidates() -> list[dict[str, Any]]:
         except Exception as e:
             print(f"[fetch_candidates] Fetch {i+1} failed: {e}", flush=True)
             log_to_json("WARNING", "Main", f"第 {i+1} 次拉取 API 节点失败: {e}")
-            if i == 0 and not candidates:
+            if i == max_attempts - 1 and not candidates:
                 log_to_json("ERROR", "Main", f"获取官方 API 节点失败: {e}")
                 raise
                 
@@ -819,6 +823,7 @@ def connect_node(node_id: str) -> str:
             print("[连接] 正在建立其他连接中，跳过此请求", flush=True)
             return "Already connecting"
         is_connecting = True
+        active_openvpn_node_id = node_id
         set_state(active_openvpn_node_id=node_id, is_connecting=True, active_node_latency="正在连接", last_check_message="正在初始化连接配置...")
         
     try:
@@ -854,6 +859,8 @@ def connect_node(node_id: str) -> str:
             write_json(NODES_FILE, nodes)
             log_to_json("ERROR", "VPN", f"连接节点 {node_id} 失败: {message}")
             set_state(active_openvpn_node_id="", is_connecting=False, active_node_latency="无活动连接", last_check_message=f"连接失败: {message}")
+            with lock:
+                active_openvpn_node_id = ""
             raise RuntimeError(message)
             
         active_openvpn_process = process
@@ -882,6 +889,24 @@ def connect_node(node_id: str) -> str:
             if item["active"]:
                 item["probe_message"] = f"Active node. HTTP proxy: http://{LOCAL_PROXY_HOST}:{LOCAL_PROXY_PORT}"
         write_json(NODES_FILE, nodes)
+        
+        set_state(last_check_message="正在测试本地代理出站联通性与出口 IP...")
+        res = check_proxy_health()
+        if res["ok"]:
+            set_state(
+                proxy_ok=True,
+                proxy_ip=res["ip"],
+                proxy_latency_ms=res["latency_ms"],
+                proxy_error=""
+            )
+        else:
+            set_state(
+                proxy_ok=False,
+                proxy_ip="-",
+                proxy_latency_ms=0,
+                proxy_error=res.get("error", "未知错误")
+            )
+            
         latency_str = f"{last_active_latency} ms" if last_active_latency > 0 else "检测超时"
         set_state(active_openvpn_node_id=node_id, is_connecting=False, last_check_message=f"Connected {node_id}", active_node_latency=latency_str)
         log_to_json("INFO", "VPN", f"节点 {node_id} 连接成功，出口网卡 tun0 已启用")
@@ -915,12 +940,8 @@ def maintain_valid_nodes(force: bool = False) -> str:
             candidates = fetch_candidates()
         except Exception as exc:
             vpn_utils.check_and_fix_dns()
-            try:
-                set_state(is_connecting=True, last_check_message="解析失败重试：正在拉取最新的免费 VPN 节点列表...")
-                candidates = fetch_candidates()
-            except Exception as exc2:
-                set_state(last_fetch_at=time.time(), last_fetch_status="error", last_fetch_message=str(exc2))
-                candidates = []
+            set_state(last_fetch_at=time.time(), last_fetch_status="error", last_fetch_message=str(exc))
+            candidates = []
 
         if not candidates:
             is_connecting = False

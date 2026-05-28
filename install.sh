@@ -359,9 +359,18 @@ def print_status():
         connecting_msg = state.get('last_check_message') or '正在建立加密隧道并验证路由规则...'
         print_line(format_line("节点状态", f"{yellow}{connecting_msg}{reset}"))
     elif active_ip:
-        print_line(format_line("节点 IP", active_ip))
+        proxy_ip = state.get("proxy_ip", "-")
+        proxy_latency = state.get("proxy_latency_ms", 0)
+        proxy_ok = state.get("proxy_ok", False)
+        
+        print_line(format_line("节点 IP (入口)", active_ip))
         print_line(format_line("节点地区", active_loc))
         print_line(format_line("节点延迟 (直连测试)", latency))
+        if proxy_ok and proxy_ip and proxy_ip != "-":
+            print_line(format_line("出口 IP (出站)", proxy_ip))
+            print_line(format_line("本地代理延迟", f"{proxy_latency} ms" if proxy_latency else "检测中..."))
+        else:
+            print_line(format_line("出口 IP (出站)", f"{red}[检测中/未就绪]{reset}"))
     else:
         print_line(format_line("节点状态", "无活动连接"))
     print_line()
@@ -652,6 +661,9 @@ def get_status_state():
         state.get("active_openvpn_node_id", ""),
         state.get("last_check_message", ""),
         state.get("active_node_latency", ""),
+        state.get("proxy_ip", "-"),
+        state.get("proxy_latency_ms", 0),
+        state.get("proxy_ok", False),
         check_port_listening(7928),
         check_service_active("aimilivpn.service"),
         check_openvpn_process(),

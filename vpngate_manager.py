@@ -598,6 +598,12 @@ def setup_policy_routing(interface: str = "tun0") -> None:
         try:
             subprocess.run(["ip", "route", "add", "default", "dev", interface, "table", "100"], check=True, timeout=2)
             subprocess.run(["ip", "rule", "add", "oif", interface, "table", "100"], check=True, timeout=2)
+            # 配置反向路径过滤 rp_filter 为 loose 模式 (2)，防止回包被内核静默丢弃
+            for proc_path in ["all", "default", interface]:
+                try:
+                    subprocess.run(["sysctl", "-w", f"net.ipv4.conf.{proc_path}.rp_filter=2"], capture_output=True, timeout=2)
+                except Exception:
+                    pass
             print(f"[policy_routing] Enabled policy routing for interface {interface} (attempt {attempt} success)", flush=True)
             success = True
             break

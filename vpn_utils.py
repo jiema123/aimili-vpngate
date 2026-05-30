@@ -611,4 +611,14 @@ def diagnose_local_obstructions(proxy_port: int = 7928, host: str = "127.0.0.1")
         except Exception:
             pass
 
+        # 4. 检查系统反向路径过滤 (rp_filter) 设置
+        rp_all_path = Path("/proc/sys/net/ipv4/conf/all/rp_filter")
+        if rp_all_path.exists():
+            try:
+                val = rp_all_path.read_text(encoding="utf-8").strip()
+                if val == "1":
+                    return 3008, "[ERR_ROUTE_RP_FILTER_STRICT] 系统启用了严格的反向路径过滤(rp_filter=1)。原因: 在启用策略路由时，严格的路径过滤会导致通过虚拟网卡 tun0 的回包被内核静默丢弃，导致连接超时。请将 net.ipv4.conf.all.rp_filter 设置为 2 或 0。"
+            except Exception:
+                pass
+
     return None

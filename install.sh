@@ -1020,6 +1020,36 @@ with open('$AUTH_FILE', 'w', encoding='utf-8') as f:
 fi
 
 # 8. Start service
+# 8.5 Optimize network parameters (rp_filter for policy routing)
+echo -e "\n正在优化网络参数 (配置反向路径过滤 rp_filter=2 以支持策略路由)..."
+if [ -d "/etc/sysctl.d" ]; then
+    cat > /etc/sysctl.d/99-aimilivpn.conf <<EOF
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+EOF
+    sysctl -p /etc/sysctl.d/99-aimilivpn.conf >/dev/null 2>&1 || true
+else
+    # Fallback to appending to /etc/sysctl.conf
+    if ! grep -q "net.ipv4.conf.all.rp_filter" /etc/sysctl.conf; then
+        echo "" >> /etc/sysctl.conf
+        echo "net.ipv4.conf.all.rp_filter = 2" >> /etc/sysctl.conf
+        echo "net.ipv4.conf.default.rp_filter = 2" >> /etc/sysctl.conf
+    else
+        sed -i 's/net.ipv4.conf.all.rp_filter\s*=\s*[0-9]/net.ipv4.conf.all.rp_filter = 2/g' /etc/sysctl.conf
+        sed -i 's/net.ipv4.conf.default.rp_filter\s*=\s*[0-9]/net.ipv4.conf.default.rp_filter = 2/g' /etc/sysctl.conf
+    fi
+    sysctl -p >/dev/null 2>&1 || true
+fi
+# Apply to currently active interfaces dynamically
+sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null 2>&1 || true
+sysctl -w net.ipv4.conf.default.rp_filter=2 >/dev/null 2>&1 || true
+if [ -d "/proc/sys/net/ipv4/conf" ]; then
+    for dev_dir in /proc/sys/net/ipv4/conf/*; do
+        dev_name=$(basename "$dev_dir")
+        sysctl -w net.ipv4.conf.${dev_name}.rp_filter=2 >/dev/null 2>&1 || true
+    done
+fi
+
 echo -e "\n正在启动 AimiliVPN 服务并初始化网络..."
 if command -v systemctl >/dev/null 2>&1; then
     systemctl restart aimilivpn.service || true
